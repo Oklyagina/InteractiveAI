@@ -40,6 +40,7 @@
   "cab.tab.map": "Map",
   "cab.tab.network": "Network",
   "cab.timeline": "Timeline",
+  "cab.handle": "Drag to resize · double-click to collapse or reopen · right-click to reset",
   "card.actions.delete.tooltip": "Archive the event",
   "card.actions.downvote.tooltip": "I do not validate this anomaly",
   "card.actions.downvote.tooltip.confirmed": "Anomaly rejected!",
