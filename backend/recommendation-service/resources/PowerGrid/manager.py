@@ -10,6 +10,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Highest agent number read from the environment (RL_AGENT_<n>_API_URL)
 MAX_AGENTS = 9
+# Seconds an agent has to answer, unless RL_AGENT[_<n>]_TIMEOUT says otherwise.
+# Keep the proxy in front of this service (nginx /cab_recommendation/) above
+# the longest one, or it cuts the request first.
+DEFAULT_AGENT_TIMEOUT = 30
 
 
 class PowerGridManager(BaseRecommendationManager):
@@ -44,6 +48,9 @@ class PowerGridManager(BaseRecommendationManager):
             "name": os.environ.get(f"RL_AGENT{suffix}_NAME") or f"Agent {number}",
             "url": os.environ.get(f"RL_AGENT{suffix}_API_URL", default_url),
             "token": os.environ.get(f"RL_AGENT{suffix}_API_TOKEN", ""),
+            "timeout": float(
+                os.environ.get(f"RL_AGENT{suffix}_TIMEOUT") or DEFAULT_AGENT_TIMEOUT
+            ),
         }
 
     def get_agents(self):
@@ -110,7 +117,7 @@ class PowerGridManager(BaseRecommendationManager):
                 url,
                 json=request_data,
                 headers=headers,
-                timeout=30,
+                timeout=agent["timeout"],
                 verify=False,  # SSL cert may not be trusted inside the container
             )
             response.raise_for_status()
@@ -127,7 +134,7 @@ class PowerGridManager(BaseRecommendationManager):
             logger.error(f"Connection error calling {name} ({url}): {e}")
             return []
         except requests.exceptions.Timeout:
-            logger.error(f"Timeout calling {name} ({url}) after 30s")
+            logger.error(f"Timeout calling {name} ({url}) after {agent['timeout']:g}s")
             return []
         except Exception as e:
             logger.error(f"Unexpected error calling {name} ({url}): {type(e).__name__}: {e}")

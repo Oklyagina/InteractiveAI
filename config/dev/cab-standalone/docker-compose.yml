@@ -199,6 +199,9 @@ services:
       - RL_AGENT_3_API_URL=${RL_AGENT_3_API_URL:-}
       - RL_AGENT_3_API_TOKEN=${RL_AGENT_3_API_TOKEN:-}
       - RL_AGENT_3_NAME=${RL_AGENT_3_NAME:-GNN agent}
+      # Seconds per agent (RL_AGENT[_<n>]_TIMEOUT, 30 by default): the GNN agent
+      # takes ~15 s on a stressed grid. nginx /cab_recommendation/ allows 120 s.
+      - RL_AGENT_3_TIMEOUT=${RL_AGENT_3_TIMEOUT:-60}
     command: sh -c "./entrypoint.sh"
     ports:
       - 5400:5000
