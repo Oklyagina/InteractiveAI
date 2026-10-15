@@ -10,9 +10,14 @@
 - PowerGrid: "Do nothing" option to resume the simulation without applying any recommendation.
 - Session export: the agents chosen for the session, the agent of each recommendation, and "Do nothing" decisions (not counted as assistance).
 
+### Fixed
+
+- The side and bottom panels resize by dragging in every browser (Firefox included); a collapsed panel keeps its content, e.g. the recommendations shown.
+
 ### Changed
 
 - Agents are configured with `RL_AGENT_<n>_API_URL`, `RL_AGENT_<n>_API_TOKEN` and `RL_AGENT_<n>_NAME` (agent 1 keeps `RL_AGENT_API_URL`); an agent without a URL is left out.
+- Each agent has its own response timeout, `RL_AGENT_<n>_TIMEOUT` (30 s by default, 60 s for the GNN agent); nginx allows 120 s on `/cab_recommendation/`.
 
 ## 1.4.2 (2026-10-07)
 
