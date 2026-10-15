@@ -33,6 +33,12 @@ cabrecommendation:
     # Set here: the defaults in docker-compose.yml do not apply on k8s.
     - name: RL_AGENT_NAME
       value: "Deep Expert"
+    # Recommendations asked from Deep Expert ("num_reco"): 3 when it is the only agent
+    # of the session, 1 next to the others (it adds a reference-topology one)
+    - name: RL_AGENT_NUM_RECO
+      value: "3"
+    - name: RL_AGENT_NUM_RECO_SHARED
+      value: "1"
     # Further agents (RL_AGENT_<n>_*); no token needed behind the gateway
     - name: RL_AGENT_2_API_URL
       value: "https://interactiveai-curriculum.passerelle.irt-systemx.fr/api/v1/recommendation"

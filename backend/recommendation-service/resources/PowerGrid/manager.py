@@ -8,6 +8,10 @@ from settings import logger
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+def _int_or_none(value):
+    return int(value) if value not in (None, "") else None
+
+
 # Highest agent number read from the environment (RL_AGENT_<n>_API_URL)
 MAX_AGENTS = 9
 # Seconds an agent has to answer, unless RL_AGENT[_<n>]_TIMEOUT says otherwise.
@@ -51,6 +55,13 @@ class PowerGridManager(BaseRecommendationManager):
             "timeout": float(
                 os.environ.get(f"RL_AGENT{suffix}_TIMEOUT") or DEFAULT_AGENT_TIMEOUT
             ),
+            # How many recommendations to ask an agent that supports "num_reco":
+            # when it is the only agent asked, and when it shares the screen with
+            # others. Unset: the agent gets no "num_reco" and uses its default.
+            "num_reco": _int_or_none(os.environ.get(f"RL_AGENT{suffix}_NUM_RECO")),
+            "num_reco_shared": _int_or_none(
+                os.environ.get(f"RL_AGENT{suffix}_NUM_RECO_SHARED")
+            ),
         }
 
     def get_agents(self):
@@ -82,20 +93,42 @@ class PowerGridManager(BaseRecommendationManager):
         # In parallel: the operator waits for the slowest agent, not the sum
         with ThreadPoolExecutor(max_workers=len(agents)) as pool:
             results = list(
-                pool.map(lambda agent: self._get_rl_parades(agent, payload), agents)
+                pool.map(
+                    lambda agent: self._get_rl_parades(
+                        agent, self._payload_for(agent, payload, alone=len(agents) == 1)
+                    ),
+                    agents,
+                )
             )
 
         recommendations = []
+        seen_titles = {}
         for agent, parades in zip(agents, results):
             for parade in parades:
                 parade["agent_id"] = agent["id"]
                 parade["agent_name"] = agent["name"]
-                # The platform tells recommendations apart by title, and two
-                # agents can propose the same one ("Continue")
+                # The platform tells recommendations apart by title, and an
+                # agent can propose two actions under the same one (Deep Expert,
+                # rank 0 and 1 at the same substation): number the repeats
+                title = parade.get("title", "")
+                key = (agent["id"], title)
+                seen_titles[key] = seen_titles.get(key, 0) + 1
+                if seen_titles[key] > 1:
+                    title = f"{title} ({seen_titles[key]})"
+                # ... and two agents can propose the same one ("Continue")
                 if len(self.agents) > 1:
-                    parade["title"] = f"{parade.get('title', '')} · {agent['name']}"
+                    title = f"{title} · {agent['name']}"
+                parade["title"] = title
                 recommendations.append(parade)
         return recommendations
+
+    @staticmethod
+    def _payload_for(agent, payload, alone):
+        """The request for one agent: with its "num_reco" when it has one."""
+        num_reco = agent["num_reco"] if alone else agent["num_reco_shared"]
+        if num_reco is None:
+            return payload
+        return {**payload, "num_reco": num_reco}
 
     def _get_rl_parades(self, agent, request_data):
         """Call an external RL agent API to get parade recommendations.

@@ -17,6 +17,7 @@
 ### Changed
 
 - Agents are configured with `RL_AGENT_<n>_API_URL`, `RL_AGENT_<n>_API_TOKEN` and `RL_AGENT_<n>_NAME` (agent 1 keeps `RL_AGENT_API_URL`); an agent without a URL is left out.
+- Deep Expert proposes 3 recommendations when it is the session's only agent and 1 next to the others (`RL_AGENT[_<n>]_NUM_RECO` / `_NUM_RECO_SHARED`, sent as `num_reco`). Recommendations with the same title get a number.
 - Each agent has its own response timeout, `RL_AGENT_<n>_TIMEOUT` (30 s by default, 60 s for the GNN agent); nginx allows 120 s on `/cab_recommendation/`.
 
 ## 1.4.2 (2026-10-07)
