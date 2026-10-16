@@ -30,5 +30,7 @@
   "PowerGrid.do_nothing.description": "Operator's choice: continue the simulation without any action",
   "PowerGrid.do_nothing.no_context": "The grid state is not available yet, try again in a few seconds.",
   "PowerGrid.agents.choice.all": "All agents",
-  "PowerGrid.agents.choice.start": "Start the session"
+  "PowerGrid.agents.choice.start": "Start the session",
+  "PowerGrid.agents.waiting": "Waiting for {agents}…",
+  "PowerGrid.agents.failed": "No answer from {agents}"
 }

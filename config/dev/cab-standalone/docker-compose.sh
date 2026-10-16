@@ -51,6 +51,8 @@ fi
 echo "RL_AGENT_API_URL=${RL_AGENT_API_URL:-https://interactiveagent.passerelle.irt-systemx.fr/api/v1/recommendation}" >> .env
 echo "RL_AGENT_API_TOKEN=${RL_AGENT_API_TOKEN:-}" >> .env
 echo "RL_AGENT_NAME=${RL_AGENT_NAME:-}" >> .env
+echo "RL_AGENT_NUM_RECO=${RL_AGENT_NUM_RECO:-}" >> .env
+echo "RL_AGENT_NUM_RECO_SHARED=${RL_AGENT_NUM_RECO_SHARED:-}" >> .env
 echo "RL_AGENT_2_API_URL=${RL_AGENT_2_API_URL:-}" >> .env
 echo "RL_AGENT_2_API_TOKEN=${RL_AGENT_2_API_TOKEN:-}" >> .env
 echo "RL_AGENT_2_NAME=${RL_AGENT_2_NAME:-}" >> .env

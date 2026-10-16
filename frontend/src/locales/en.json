@@ -66,6 +66,7 @@
   "modal.error.ERR_BAD_RESPONSE": "Server response error",
   "modal.error.ERR_NETWORK": "Network error",
   "modal.error.NO_CONTEXT": "Unable to retrieve recommendations without context",
+  "modal.error.RECOMMENDATION_JOB": "Lost contact with the recommendation service while waiting for the agents. Ask for recommendations again.",
   "modal.error.SESSION_EXPIRED": "Your session has expired, please log in again",
   "modal.error.default": "Request to {url} failed with code {code} and message {message}",
   "modal.info.DELETE_ALERTS": "Delete the remaining alerts? They will not be shown at the next login.",

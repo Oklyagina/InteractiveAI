@@ -14,9 +14,18 @@
         :secondary-action="() => {}">
         {{ appStore.card('PowerGrid')!.titleTranslated }}
       </Event>
+      <template v-if="appStore.tab.assistant === 2 && appStore.card('PowerGrid')">
+        <p v-if="pendingAgents.length" class="cab-agents-status">
+          {{ $t('PowerGrid.agents.waiting', { agents: pendingAgents.join(', ') }) }}
+        </p>
+        <p v-if="failedAgents.length" class="cab-agents-status failed">
+          {{ $t('PowerGrid.agents.failed', { agents: failedAgents.join(', ') }) }}
+        </p>
+      </template>
       <Recommendations
         v-if="appStore.tab.assistant === 2 && appStore.card('PowerGrid')"
         v-model:recommendations="recommendations"
+        :complete="!pendingAgents.length"
         :buttons="[$t('recommendations.button1'), $t('recommendations.button2')]"
         @selected="onSelection">
         <template #default="{ recommendation, index }">
@@ -65,7 +74,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeMount, ref, watch } from 'vue'
+import { computed, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
@@ -121,17 +130,44 @@ function onAgentChoice(choice: SessionAgentChoice) {
   agentChoice.value = choice
 }
 
-let lastRequest = 0
+/** Names of the agents still working on the request, and of those that gave no answer */
+const pendingAgents = ref<string[]>([])
+const failedAgents = ref<string[]>([])
 
+let request: AbortController | undefined
+
+/**
+ * Each agent's recommendations are shown as soon as it answers: the GNN agent
+ * takes 15 s or more, the others a second or two.
+ */
 async function fetchRecommendations() {
   if (!appStore.card('PowerGrid')) return
-  // Asked again while an answer is pending: only the latest request counts
-  const request = ++lastRequest
+  // Asked again while agents are still answering: only the latest request counts
+  request?.abort()
+  const current = (request = new AbortController())
   recommendations.value = []
-  await servicesStore.getRecommendation(appStore.card('PowerGrid')!, undefined, agentChoice.value?.ids)
-  if (request !== lastRequest) return
-  recommendations.value = servicesStore.recommendations('PowerGrid')
+  pendingAgents.value = []
+  failedAgents.value = []
+  // Added as they come, so that one the operator has downvoted stays out
+  const seen = new Set<string>()
+  await servicesStore.watchRecommendations(appStore.card('PowerGrid')!, {
+    agents: agentChoice.value?.ids,
+    signal: current.signal,
+    onUpdate: (job) => {
+      const added = job.recommendations.filter((recommendation) => !seen.has(recommendation.title))
+      added.forEach((recommendation) => seen.add(recommendation.title))
+      if (added.length) recommendations.value = [...recommendations.value, ...added]
+      const named = (status: string) =>
+        job.agents.filter((agent) => agent.status === status).map((agent) => agent.name)
+      pendingAgents.value = named('pending')
+      failedAgents.value = named('failed')
+    }
+  })
+  // Gave up or replaced: nothing is on its way any more
+  if (request === current) pendingAgents.value = []
 }
+
+onBeforeUnmount(() => request?.abort())
 
 /**
  * KPI rows of the comparison table. `uncertainty` (the agent's epistemic
@@ -177,6 +213,11 @@ watch(
     switch (index) {
       case 2:
         await fetchRecommendations()
+        break
+      default:
+        // The answers would go to a screen that is no longer there
+        request?.abort()
+        pendingAgents.value = []
     }
   }
 )
@@ -264,6 +305,15 @@ table {
 
   .active {
     background-color: var(--color-grey-300);
+  }
+}
+
+.cab-agents-status {
+  color: var(--color-grey-600);
+  font-style: italic;
+
+  &.failed {
+    color: var(--color-error);
   }
 }
 </style>

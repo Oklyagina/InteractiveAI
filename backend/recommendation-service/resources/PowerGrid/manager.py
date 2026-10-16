@@ -1,12 +1,18 @@
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 import urllib3
+from api.exceptions import AgentError
 from api.manager.base_manager import BaseRecommendationManager
 from settings import logger
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def _int_or_none(value):
+    return int(value) if value not in (None, "") else None
+
 
 # Highest agent number read from the environment (RL_AGENT_<n>_API_URL)
 MAX_AGENTS = 9
@@ -51,11 +57,23 @@ class PowerGridManager(BaseRecommendationManager):
             "timeout": float(
                 os.environ.get(f"RL_AGENT{suffix}_TIMEOUT") or DEFAULT_AGENT_TIMEOUT
             ),
+            # How many recommendations to ask an agent that supports "num_reco":
+            # when it is the only agent asked, and when it shares the screen with
+            # others. Unset: the agent gets no "num_reco" and uses its default.
+            "num_reco": _int_or_none(os.environ.get(f"RL_AGENT{suffix}_NUM_RECO")),
+            "num_reco_shared": _int_or_none(
+                os.environ.get(f"RL_AGENT{suffix}_NUM_RECO_SHARED")
+            ),
         }
 
     def get_agents(self):
         """The agents an operator can pick from, without their URL or token."""
         return [{"id": agent["id"], "name": agent["name"]} for agent in self.agents]
+
+    def select_agents(self, request_data):
+        """The agents a request asks: its "agents" ids, all of them when absent or empty."""
+        requested = request_data.get("agents") or []
+        return [a for a in self.agents if not requested or a["id"] in requested]
 
     def get_recommendation(self, request_data):
         """Get IA agent recomendations
@@ -69,33 +87,67 @@ class PowerGridManager(BaseRecommendationManager):
             list[dict]: List of recomendations, each tagged with the agent
                 that made it
         """
-        requested = request_data.get("agents") or []
-        agents = [a for a in self.agents if not requested or a["id"] in requested]
-        # The agents get the request as before, without the platform's own field
-        payload = {k: v for k, v in request_data.items() if k != "agents"}
+        agents = self.select_agents(request_data)
         logger.info(
             "Getting recommendations from %s",
             ", ".join(agent["name"] for agent in agents) or "no agent",
         )
         if not agents:
             return []
+
+        def ask(agent):
+            try:
+                return self.recommend_from(agent, request_data, alone=len(agents) == 1)
+            except AgentError:
+                return []
+
         # In parallel: the operator waits for the slowest agent, not the sum
         with ThreadPoolExecutor(max_workers=len(agents)) as pool:
-            results = list(
-                pool.map(lambda agent: self._get_rl_parades(agent, payload), agents)
-            )
+            results = list(pool.map(ask, agents))
+        return [parade for parades in results for parade in parades]
 
-        recommendations = []
-        for agent, parades in zip(agents, results):
-            for parade in parades:
-                parade["agent_id"] = agent["id"]
-                parade["agent_name"] = agent["name"]
-                # The platform tells recommendations apart by title, and two
-                # agents can propose the same one ("Continue")
-                if len(self.agents) > 1:
-                    parade["title"] = f"{parade.get('title', '')} · {agent['name']}"
-                recommendations.append(parade)
-        return recommendations
+    def recommend_from(self, agent, request_data, alone):
+        """The recommendations of one agent, tagged with it.
+
+        Args:
+            agent (dict): The agent to ask, from self.agents
+            request_data (dict): The request, as for get_recommendation
+            alone (bool): Whether it is the only agent asked
+
+        Returns:
+            list[dict]: Its recommendations
+
+        Raises:
+            AgentError: The agent could not be reached or gave no valid answer
+        """
+        # The agents get the request as before, without the platform's own field
+        payload = {k: v for k, v in request_data.items() if k != "agents"}
+        parades = self._get_rl_parades(agent, self._payload_for(agent, payload, alone))
+
+        seen_titles = {}
+        for parade in parades:
+            parade["agent_id"] = agent["id"]
+            parade["agent_name"] = agent["name"]
+            # The platform tells recommendations apart by title, and an
+            # agent can propose two actions under the same one (Deep Expert,
+            # rank 0 and 1 at the same substation): number the repeats
+            title = parade.get("title", "")
+            seen_titles[title] = seen_titles.get(title, 0) + 1
+            if seen_titles[title] > 1:
+                title = f"{title} ({seen_titles[title]})"
+            # ... and two agents can propose the same one ("Continue")
+            if len(self.agents) > 1:
+                title = f"{title} · {agent['name']}"
+            parade["title"] = title
+        return parades
+
+    @staticmethod
+    def _payload_for(agent, payload, alone):
+        """The request for one agent: with its "num_reco" when it has one."""
+        num_reco = agent["num_reco"] if alone else agent["num_reco_shared"]
+        if num_reco is None:
+            return payload
+        return {**payload, "num_reco": num_reco}
 
     def _get_rl_parades(self, agent, request_data):
         """Call an external RL agent API to get parade recommendations.
@@ -105,10 +157,14 @@ class PowerGridManager(BaseRecommendationManager):
             request_data (dict): Full request payload with keys "event" and "context"
 
         Returns:
-            list[dict]: List of parade recommendations, empty on failure
+            list[dict]: List of parade recommendations
+
+        Raises:
+            AgentError: On any failure, logged here
         """
         url = agent["url"]
         name = agent["name"]
+        start = time.monotonic()
         try:
             headers = {}
             if agent["token"]:
@@ -122,20 +178,24 @@ class PowerGridManager(BaseRecommendationManager):
             )
             response.raise_for_status()
             data = response.json()
-            logger.info(f"{name} returned {len(data)} recommendation(s)")
+            if not isinstance(data, list):
+                raise ValueError(f"expected a list, got {type(data).__name__}")
+            logger.info(
+                f"{name} returned {len(data)} recommendation(s) in {time.monotonic() - start:.1f}s"
+            )
             return data
         except requests.exceptions.SSLError as e:
             logger.error(f"SSL error calling {name} ({url}): {e}")
-            return []
+            raise AgentError(name) from e
         except requests.exceptions.HTTPError as e:
             logger.error(f"HTTP error calling {name} ({url}): {e} — response body: {e.response.text[:500] if e.response is not None else 'N/A'}")
-            return []
+            raise AgentError(name) from e
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Connection error calling {name} ({url}): {e}")
-            return []
-        except requests.exceptions.Timeout:
+            raise AgentError(name) from e
+        except requests.exceptions.Timeout as e:
             logger.error(f"Timeout calling {name} ({url}) after {agent['timeout']:g}s")
-            return []
+            raise AgentError(name) from e
         except Exception as e:
             logger.error(f"Unexpected error calling {name} ({url}): {type(e).__name__}: {e}")
-            return []
+            raise AgentError(name) from e

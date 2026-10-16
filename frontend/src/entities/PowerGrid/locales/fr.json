@@ -30,5 +30,7 @@
   "PowerGrid.do_nothing.description": "Choix de l'opérateur : poursuivre la simulation sans aucune action",
   "PowerGrid.do_nothing.no_context": "L'état du réseau n'est pas encore disponible, réessayez dans quelques secondes.",
   "PowerGrid.agents.choice.all": "Tous les agents",
-  "PowerGrid.agents.choice.start": "Démarrer la session"
+  "PowerGrid.agents.choice.start": "Démarrer la session",
+  "PowerGrid.agents.waiting": "En attente de {agents}…",
+  "PowerGrid.agents.failed": "Pas de réponse de {agents}"
 }

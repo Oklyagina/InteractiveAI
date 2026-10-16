@@ -1,5 +1,5 @@
 from apiflask import Schema
-from apiflask.fields import Dict, Integer, List, String
+from apiflask.fields import Dict, Integer, List, Nested, String
 from apiflask.validators import Length
 
 
@@ -30,6 +30,23 @@ class RecommendationOut(Schema):
 class AgentOut(Schema):
     id = String()
     name = String()
+
+
+class JobAgentOut(Schema):
+    id = String()
+    name = String(allow_none=True)
+    # pending, done or failed
+    status = String()
+
+
+class RecommendationJobOut(Schema):
+    id = String()
+    use_case = String()
+    # running while an agent is pending, then done
+    status = String()
+    agents = List(Nested(JobAgentOut))
+    # Those of the agents that have answered
+    recommendations = List(Nested(RecommendationOut))
 
 
 class ProcedureOut(Schema):
