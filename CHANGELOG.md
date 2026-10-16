@@ -8,6 +8,7 @@
 - PowerGrid: several recommendation agents. At the start of a session the operator chooses Deep Expert, CurriculumAgent, the GNN agent or all of them; each recommendation shows the agent that made it.
 - PowerGrid: uncertainty KPI in the recommendations table, for agents that estimate it (CurriculumAgent).
 - PowerGrid: "Do nothing" option to resume the simulation without applying any recommendation.
+- PowerGrid: post-logout survey replaced by the AI4REALNET power grid evaluation, in French (6 questionnaires: ATAI, agreement score, significance of human revisions, decision novelty, operator deskilling, long-term adoption).
 - Session export: the agents chosen for the session, the agent of each recommendation, and "Do nothing" decisions (not counted as assistance).
 
 ### Fixed
