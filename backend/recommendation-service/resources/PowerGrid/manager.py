@@ -1,8 +1,10 @@
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 import urllib3
+from api.exceptions import AgentError
 from api.manager.base_manager import BaseRecommendationManager
 from settings import logger
 
@@ -68,6 +70,11 @@ class PowerGridManager(BaseRecommendationManager):
         """The agents an operator can pick from, without their URL or token."""
         return [{"id": agent["id"], "name": agent["name"]} for agent in self.agents]
 
+    def select_agents(self, request_data):
+        """The agents a request asks: its "agents" ids, all of them when absent or empty."""
+        requested = request_data.get("agents") or []
+        return [a for a in self.agents if not requested or a["id"] in requested]
+
     def get_recommendation(self, request_data):
         """Get IA agent recomendations
 
@@ -80,47 +87,59 @@ class PowerGridManager(BaseRecommendationManager):
             list[dict]: List of recomendations, each tagged with the agent
                 that made it
         """
-        requested = request_data.get("agents") or []
-        agents = [a for a in self.agents if not requested or a["id"] in requested]
-        # The agents get the request as before, without the platform's own field
-        payload = {k: v for k, v in request_data.items() if k != "agents"}
+        agents = self.select_agents(request_data)
         logger.info(
             "Getting recommendations from %s",
             ", ".join(agent["name"] for agent in agents) or "no agent",
         )
         if not agents:
             return []
+
+        def ask(agent):
+            try:
+                return self.recommend_from(agent, request_data, alone=len(agents) == 1)
+            except AgentError:
+                return []
+
         # In parallel: the operator waits for the slowest agent, not the sum
         with ThreadPoolExecutor(max_workers=len(agents)) as pool:
-            results = list(
-                pool.map(
-                    lambda agent: self._get_rl_parades(
-                        agent, self._payload_for(agent, payload, alone=len(agents) == 1)
-                    ),
-                    agents,
-                )
-            )
+            results = list(pool.map(ask, agents))
+        return [parade for parades in results for parade in parades]
 
-        recommendations = []
+    def recommend_from(self, agent, request_data, alone):
+        """The recommendations of one agent, tagged with it.
+
+        Args:
+            agent (dict): The agent to ask, from self.agents
+            request_data (dict): The request, as for get_recommendation
+            alone (bool): Whether it is the only agent asked
+
+        Returns:
+            list[dict]: Its recommendations
+
+        Raises:
+            AgentError: The agent could not be reached or gave no valid answer
+        """
+        # The agents get the request as before, without the platform's own field
+        payload = {k: v for k, v in request_data.items() if k != "agents"}
+        parades = self._get_rl_parades(agent, self._payload_for(agent, payload, alone))
+
         seen_titles = {}
-        for agent, parades in zip(agents, results):
-            for parade in parades:
-                parade["agent_id"] = agent["id"]
-                parade["agent_name"] = agent["name"]
-                # The platform tells recommendations apart by title, and an
-                # agent can propose two actions under the same one (Deep Expert,
-                # rank 0 and 1 at the same substation): number the repeats
-                title = parade.get("title", "")
-                key = (agent["id"], title)
-                seen_titles[key] = seen_titles.get(key, 0) + 1
-                if seen_titles[key] > 1:
-                    title = f"{title} ({seen_titles[key]})"
-                # ... and two agents can propose the same one ("Continue")
-                if len(self.agents) > 1:
-                    title = f"{title} · {agent['name']}"
-                parade["title"] = title
-                recommendations.append(parade)
-        return recommendations
+        for parade in parades:
+            parade["agent_id"] = agent["id"]
+            parade["agent_name"] = agent["name"]
+            # The platform tells recommendations apart by title, and an
+            # agent can propose two actions under the same one (Deep Expert,
+            # rank 0 and 1 at the same substation): number the repeats
+            title = parade.get("title", "")
+            seen_titles[title] = seen_titles.get(title, 0) + 1
+            if seen_titles[title] > 1:
+                title = f"{title} ({seen_titles[title]})"
+            # ... and two agents can propose the same one ("Continue")
+            if len(self.agents) > 1:
+                title = f"{title} · {agent['name']}"
+            parade["title"] = title
+        return parades
 
     @staticmethod
     def _payload_for(agent, payload, alone):
@@ -138,10 +157,14 @@ class PowerGridManager(BaseRecommendationManager):
             request_data (dict): Full request payload with keys "event" and "context"
 
         Returns:
-            list[dict]: List of parade recommendations, empty on failure
+            list[dict]: List of parade recommendations
+
+        Raises:
+            AgentError: On any failure, logged here
         """
         url = agent["url"]
         name = agent["name"]
+        start = time.monotonic()
         try:
             headers = {}
             if agent["token"]:
@@ -155,20 +178,24 @@ class PowerGridManager(BaseRecommendationManager):
             )
             response.raise_for_status()
             data = response.json()
-            logger.info(f"{name} returned {len(data)} recommendation(s)")
+            if not isinstance(data, list):
+                raise ValueError(f"expected a list, got {type(data).__name__}")
+            logger.info(
+                f"{name} returned {len(data)} recommendation(s) in {time.monotonic() - start:.1f}s"
+            )
             return data
         except requests.exceptions.SSLError as e:
             logger.error(f"SSL error calling {name} ({url}): {e}")
-            return []
+            raise AgentError(name) from e
         except requests.exceptions.HTTPError as e:
             logger.error(f"HTTP error calling {name} ({url}): {e} — response body: {e.response.text[:500] if e.response is not None else 'N/A'}")
-            return []
+            raise AgentError(name) from e
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Connection error calling {name} ({url}): {e}")
-            return []
-        except requests.exceptions.Timeout:
+            raise AgentError(name) from e
+        except requests.exceptions.Timeout as e:
             logger.error(f"Timeout calling {name} ({url}) after {agent['timeout']:g}s")
-            return []
+            raise AgentError(name) from e
         except Exception as e:
             logger.error(f"Unexpected error calling {name} ({url}): {type(e).__name__}: {e}")
-            return []
+            raise AgentError(name) from e

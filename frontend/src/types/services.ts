@@ -18,6 +18,16 @@ export type Agent = {
   name: string
 }
 
+/** Recommendations asked agent by agent: poll it until `status` is `done`. */
+export type RecommendationJob<E extends Entity = Entity> = {
+  id: string
+  use_case: E
+  status: 'running' | 'done'
+  agents: (Agent & { status: 'pending' | 'done' | 'failed' })[]
+  /** Those of the agents that have answered */
+  recommendations: Recommendation<E>[]
+}
+
 export type FullContext<E extends Entity = Entity> = {
   data: Context<E>
   date: DateMillisecondsFormat
