@@ -136,7 +136,7 @@ def _forecast_observation(
     load_p: np.ndarray,
     load_q: np.ndarray,
     gen_p: np.ndarray,
-) -> Any:
+) -> Tuple[Any, Optional[Any]]:
     simulator_factory = getattr(obs, "get_simulator", None)
     if callable(simulator_factory):
         simulator = simulator_factory().predict(
@@ -148,7 +148,7 @@ def _forecast_observation(
         )
         if not simulator.converged:
             raise RuntimeError(f"Forecast power flow did not converge: {simulator.error}")
-        return simulator.current_obs
+        return simulator.current_obs, simulator
 
     now = obs.get_time_stamp()
     future = now + dt.timedelta(minutes=HORIZON_STEPS * STEP_MINUTES)
@@ -170,7 +170,34 @@ def _forecast_observation(
     forecast_obs, _, done, info = obs_copy.simulate(_no_op(env, obs))
     if done and info.get("exception"):
         raise RuntimeError(f"Forecast power flow failed: {info['exception']}")
-    return forecast_obs
+    return forecast_obs, None
+
+
+def _line_id(env: Any, line_name: str) -> int:
+    normalized = str(line_name).replace("line_", "")
+    for index, name in enumerate(getattr(env, "name_line", ())):
+        if str(name).replace("line_", "") == normalized:
+            return int(index)
+    try:
+        return int(line_name)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Unknown Grid2Op line: {line_name!r}") from exc
+
+
+def _contingency_observation(
+    env: Any,
+    forecast_obs: Any,
+    simulator: Any,
+    line_name: str,
+) -> Any:
+    """Disconnect one line from the forecast state and return that scenario."""
+    action = env.action_space({
+        "set_line_status": [(_line_id(env, line_name), -1)]
+    })
+    if simulator is not None:
+        return simulator.predict(action).current_obs
+    contingency_obs, _, _, _ = forecast_obs.simulate(action)
+    return contingency_obs
 
 
 class FailureForecastService:
@@ -235,13 +262,9 @@ class FailureForecastService:
             raise ValueError("Failure classifier does not expose class 1")
         return float(probabilities[0, matches[0]])
 
-    def predict(self, env: Any, obs: Any, line_name: str) -> Dict[str, Any]:
-        """Forecast failure for the line involved in the current overload."""
+    def _forecast_context(self, env: Any, obs: Any) -> Dict[str, Any]:
+        """Build the common t+12 operating state used by all contingencies."""
         self.record_observation(obs)
-        normalized_line = str(line_name).replace("line_", "")
-        if normalized_line not in self.line_map:
-            raise ValueError(f"Unknown line for failure classifier: {line_name!r}")
-
         x_t12 = get_features_with_history(list(self.history), obs)
         mean_prediction = np.asarray(
             self.mean_model.predict([x_t12])[0], dtype=float
@@ -268,17 +291,43 @@ class FailureForecastService:
         sigma = np.sqrt(
             np.expm1(np.clip(variance_prediction, 0.0, None)) + 1e-12
         )
-        forecast_obs = _forecast_observation(
+        forecast_obs, simulator = _forecast_observation(
             env, obs, load_p, load_q, gen_p
         )
-        current = _grid_stats(obs)
-        forecast = _grid_stats(forecast_obs)
+        return {
+            "current": _grid_stats(obs),
+            "forecast_obs": forecast_obs,
+            "simulator": simulator,
+            "sigma": sigma,
+            "n_load": n_load,
+        }
+
+    def _predict_line(
+        self,
+        env: Any,
+        line_name: str,
+        context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        normalized_line = str(line_name).replace("line_", "")
+        if normalized_line not in self.line_map:
+            raise ValueError(f"Unknown line for failure classifier: {line_name!r}")
+
+        contingency_obs = _contingency_observation(
+            env,
+            context["forecast_obs"],
+            context["simulator"],
+            line_name,
+        )
+        current = context["current"]
+        scenario = _grid_stats(contingency_obs)
+        sigma = context["sigma"]
+        n_load = context["n_load"]
         sum_gen = current["sum_gen_p"]
         row = {
             "line_id_encoded": self.line_map[normalized_line],
             **current,
             "load_gen_ratio": current["sum_load_p"] / (sum_gen + 1e-6),
-            **{f"fcast_{key}": value for key, value in forecast.items()},
+            **{f"fcast_{key}": value for key, value in scenario.items()},
             "aleatoric_load_p_mean": float(np.mean(sigma[:n_load])),
             "aleatoric_load_q_mean": float(np.mean(sigma[n_load:2 * n_load])),
             "aleatoric_gen_p_mean": float(np.mean(sigma[2 * n_load:])),
@@ -299,6 +348,21 @@ class FailureForecastService:
             "forecast_horizon_minutes": int(HORIZON_STEPS * STEP_MINUTES),
             "line": normalized_line,
         }
+
+    def predict(self, env: Any, obs: Any, line_name: str) -> Dict[str, Any]:
+        """Forecast failure for the line involved in the current overload."""
+        return self._predict_line(env, line_name, self._forecast_context(env, obs))
+
+    def predict_many(
+        self,
+        env: Any,
+        obs: Any,
+        line_names: Optional[Sequence[str]] = None,
+    ) -> list[Dict[str, Any]]:
+        """Return one HGB result per line from one common forecast state."""
+        lines = list(line_names) if line_names is not None else list(self.line_map)
+        context = self._forecast_context(env, obs)
+        return [self._predict_line(env, line, context) for line in lines]
 
 
 def build_failure_forecast_event(
@@ -335,7 +399,7 @@ def build_failure_forecast_event(
 
     return {
         "criticality": criticality,
-        "title": f"Failure prediction {probability_pct:.1f}%",
+        "title": f"Predicted probability of failure: {probability_pct:.1f}%",
         "description": description,
         "start_date": f"{context_date}",
         "end_date": f"{context_date + dt.timedelta(minutes=5)}",

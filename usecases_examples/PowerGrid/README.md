@@ -83,8 +83,10 @@ simulator. The default remains `Ressources/failure_forecast`.
 
 The simulator keeps the required one-hour, one-day, and one-week observation
 history in memory. When an overload event is accepted by InteractiveAI, the
-simulator forecasts failure for that overloaded line and publishes a second
-event whose `parent_event_id` is the overload event ID.
+simulator builds the one-hour-ahead grid state, disconnects that overloaded line,
+derives the HGB features from the resulting contingency state, and publishes a
+second event whose `parent_event_id` is the overload event ID. The event KPIs
+retain both `failure_probability` and `failure_prediction`.
 
 # 2 Run the simulator
 
