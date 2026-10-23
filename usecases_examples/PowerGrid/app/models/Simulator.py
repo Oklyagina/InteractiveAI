@@ -370,40 +370,31 @@ class Simulator:
                                 or overload_response.get("id")
                             )
                         if parent_event_id and self.failure_forecast is not None:
-                            if not self.failure_forecast.supports_line(forecast_line):
-                                logging.warning(
-                                    "No failure forecast is available for line %s; "
-                                    "the overload event will remain without a "
-                                    "failure-forecast child event",
-                                    overloaded_line
+                            try:
+                                forecasts = self.failure_forecast.predict_many(
+                                    self.env,
+                                    self.obs
                                 )
-                            else:
-                                try:
-                                    forecast = self.failure_forecast.predict(
-                                        self.env,
-                                        self.obs,
-                                        forecast_line
-                                    )
-                                    com.send_failure_forecast_event(
-                                        context_date,
-                                        self.config['scenario_first_step'],
-                                        forecast,
-                                        parent_event_id,
-                                        self.obs,
-                                        overloaded_line,
-                                        img_b64_current
-                                    )
-                                    logging.info(
-                                        "Failure forecast for line %s: %s",
-                                        overloaded_line,
-                                        forecast
-                                    )
-                                except Exception as exc:
-                                    logging.error(
-                                        "Failure forecast failed for line %s: %s",
-                                        overloaded_line,
-                                        exc
-                                    )
+                                com.send_failure_forecast_event(
+                                    context_date,
+                                    self.config['scenario_first_step'],
+                                    forecasts,
+                                    parent_event_id,
+                                    self.obs,
+                                    forecast_line,
+                                    img_b64_current
+                                )
+                                logging.info(
+                                    "Failure forecasts triggered by line %s: %s",
+                                    overloaded_line,
+                                    forecasts
+                                )
+                            except Exception as exc:
+                                logging.error(
+                                    "Failure forecast failed for line %s: %s",
+                                    overloaded_line,
+                                    exc
+                                )
                         elif self.failure_forecast is not None:
                             logging.error(
                                 "Failure forecast event was not sent because "

@@ -78,10 +78,9 @@ failure_classifier_metadata.json
 ```
 
 The current classifier covers the 10 selected transmission lines recorded in
-`failure_classifier_metadata.json`. Overloads on other lines are still sent to
-InteractiveAI, but no failure-forecast child event is produced for them. Keep
-all four files from the same training run together; mixing model generations is
-rejected when the simulator starts.
+`failure_classifier_metadata.json`. Each overload triggers one child event with
+predictions for all 10 lines. Keep all four files from the same training run
+together; mixing model generations is rejected when the simulator starts.
 
 For a local validation with artifacts stored elsewhere, set
 `FAILURE_FORECAST_ARTIFACT_DIR` to that directory before starting the
@@ -89,10 +88,11 @@ simulator. The default remains `Ressources/failure_forecast`.
 
 The simulator keeps the required one-hour, one-day, and one-week observation
 history in memory. When an overload event is accepted by InteractiveAI, the
-simulator builds the one-hour-ahead grid state, disconnects that overloaded line,
-derives the HGB features from the resulting contingency state, and publishes a
-second event whose `parent_event_id` is the overload event ID. The event KPIs
-retain both `failure_probability` and `failure_prediction`.
+simulator builds the one-hour-ahead grid state, disconnects each of the 10
+trained lines independently, and publishes a second event whose
+`parent_event_id` is the overload event ID. The event KPIs contain
+`failure_probability`, `failure_probability_pct`, and `failure_prediction` for
+each trained line.
 
 # 2 Run the simulator
 

@@ -396,40 +396,43 @@ class FailureForecastService:
 
 def build_failure_forecast_event(
     context_date: dt.datetime,
-    forecast: Dict[str, Any],
+    forecasts: Sequence[Dict[str, Any]],
     parent_event_id: str,
     line_name: str,
     img_b64: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build a schema-compatible event linked to an overload event."""
-    probability_pct = float(forecast["failure_probability_pct"])
-    will_fail = bool(forecast["failure_prediction"])
-    criticality = "HIGH" # as there's already an overload in the line
-    if will_fail:
-        description = (
-            "The agent is likely unable to provide a solution "
-            f"for overload on line {line_name} within one hour."
-        )
-    else:
-        description = (
-            "The agent is likely able to provide a solution for overload "
-            f"on line {line_name} within one hour."
-        )
+    """Build one event containing failure probabilities for every line."""
+    failure_forecasts = {
+        str(forecast["line"]).replace("line_", ""): {
+            "failure_probability": float(forecast["failure_probability"]),
+            "failure_probability_pct": float(forecast["failure_probability_pct"]),
+            "failure_prediction": int(forecast["failure_prediction"]),
+        }
+        for forecast in forecasts
+    }
 
     event_data = {
         "event_type": "anticipation",
         # InteractiveAI currently de-duplicates PowerGrid events by data.line.
         # Keep the forecast distinct from its overload parent.
         "line": f"failure_forecast:{line_name}",
-        "kpis": dict(forecast),
+        "kpis": {
+            "trigger_line": str(line_name).replace("line_", ""),
+            "forecast_horizon_steps": int(HORIZON_STEPS),
+            "forecast_horizon_minutes": int(HORIZON_STEPS * STEP_MINUTES),
+            "failure_forecasts": failure_forecasts,
+        },
     }
     if img_b64 is not None:
         event_data["event_context"] = img_b64
 
     return {
-        "criticality": criticality,
-        "title": f"Predicted probability of failure: {probability_pct:.1f}%",
-        "description": description,
+        "criticality": "HIGH",
+        "title": "Predicted failure probabilities by line",
+        "description": (
+            f"One-hour-ahead failure predictions triggered by overload on "
+            f"line {line_name}."
+        ),
         "start_date": f"{context_date}",
         "end_date": f"{context_date + dt.timedelta(minutes=5)}",
         "parent_event_id": str(parent_event_id),
