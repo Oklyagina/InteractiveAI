@@ -95,9 +95,9 @@ def get_features_with_history(
         values(2016, "load_q", sizes[1]),
         values(2016, "gen_p", sizes[2]),
     ])
-    hour_cos, hour_sin = _cyclic(getattr(obs, "hour_of_day", 0), 23)
-    minute_cos, minute_sin = _cyclic(getattr(obs, "minute_of_hour", 0), 59)
-    dow_cos, dow_sin = _cyclic(getattr(obs, "day_of_week", 0), 6)
+    hour_cos, hour_sin = _cyclic(getattr(obs, "hour_of_day", 0), 24)
+    minute_cos, minute_sin = _cyclic(getattr(obs, "minute_of_hour", 0), 60)
+    dow_cos, dow_sin = _cyclic(getattr(obs, "day_of_week", 0), 7)
     temporal = np.asarray([
         getattr(obs, "day", 1),
         hour_cos,
@@ -241,10 +241,39 @@ class FailureForecastService:
             for name, encoded in self.metadata.get("line_map", {}).items()
         }
         self.threshold = float(self.metadata.get("decision_threshold", 0.5))
+        self._validate_bundle()
         self.history: Deque[ObservationHistoryEntry] = deque(
             maxlen=HISTORY_STEPS + 1
         )
         self.last_recorded_step: Optional[int] = None
+
+    def _validate_bundle(self) -> None:
+        """Reject incomplete or mixed-generation deployment artifacts."""
+        if self.features != CLASSIFIER_FEATURES:
+            raise ValueError(
+                "Failure forecast classifier features do not match this "
+                "PowerGrid runtime. Deploy a compatible metadata/model bundle."
+            )
+        if not self.line_map:
+            raise ValueError("Failure forecast metadata has an empty line mapping")
+        horizon_steps = self.metadata.get("forecast_horizon_steps")
+        if horizon_steps != HORIZON_STEPS:
+            raise ValueError(
+                "Failure forecast metadata has an incompatible horizon: "
+                f"expected {HORIZON_STEPS} steps, got {horizon_steps!r}"
+            )
+        classifier_width = getattr(self.classifier, "n_features_in_", None)
+        if classifier_width is not None and int(classifier_width) != len(self.features):
+            raise ValueError(
+                "Failure classifier input width does not match its metadata: "
+                f"model expects {classifier_width}, metadata defines "
+                f"{len(self.features)} features"
+            )
+
+    def supports_line(self, line_name: str) -> bool:
+        """Return whether the deployed classifier was trained for a line."""
+        normalized_line = str(line_name).replace("line_", "")
+        return normalized_line in self.line_map
 
     def record_observation(self, obs: Any) -> None:
         """Record each simulator step once, including the warm-up period."""

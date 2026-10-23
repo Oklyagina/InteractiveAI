@@ -77,6 +77,12 @@ failure_classifier.pkl
 failure_classifier_metadata.json
 ```
 
+The current classifier covers the 10 selected transmission lines recorded in
+`failure_classifier_metadata.json`. Overloads on other lines are still sent to
+InteractiveAI, but no failure-forecast child event is produced for them. Keep
+all four files from the same training run together; mixing model generations is
+rejected when the simulator starts.
+
 For a local validation with artifacts stored elsewhere, set
 `FAILURE_FORECAST_ARTIFACT_DIR` to that directory before starting the
 simulator. The default remains `Ressources/failure_forecast`.
